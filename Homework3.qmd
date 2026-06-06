@@ -1,0 +1,1060 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+```{r}
+library(pacman)
+
+p_load(rtracklayer, tidyverse, patchwork, data.table, ggplot2, dplyr, stringr, GenomicRanges, org.Hs.eg.db, AnnotationDbi, purrr, dplyr, purrr, stringr, GenomicRanges, EnrichedHeatmap, ComplexHeatmap, circlize, grid, TxDb.Hsapiens.UCSC.hg19.knownGene, EnrichedHeatmap, ComplexHeatmap, colorRamp2, png, magick)
+```
+
+# Data inspection and setup
+
+```{r}
+VST_data <- read.csv("VST_data.csv", sep="")
+DEG_All_Genes <- read.csv("DEG_All_Genes.csv")
+dmr <- read.delim("dmr.bed.txt")
+
+N2 <- read.delim("escc.dmr3bp.smp.N2.h.bed")
+N12 <- read.delim("escc.dmr3bp.smp.N12.h.bed")
+T2 <- read.delim("escc.dmr3bp.smp.T2.h.bed")
+T12 <- read.delim("escc.dmr3bp.smp.T12.h.bed")
+
+
+H3K27me_peaks <- read.delim("ENCFF179UDS.bed", header=FALSE)
+colnames(H3K27me_peaks) <- c("chromosome", "start", "end", "annotation", "score", "strand", "signalValue", "pValue", "qValue", "peak")
+H3K27ac_peaks <- read.delim("ENCFF646OKL.bed", header=FALSE)
+colnames(H3K27ac_peaks) <- c("chromosome", "start", "end", "annotation", "score", "strand", "signalValue", "pValue", "qValue", "peak")
+
+H3K27ac_signal <- import("ENCFF075TZQ.bigWig")
+H3K27me_signal <- import("ENCFF937OKW.bigWig")
+```
+
+How many genes are in the expression matrix? How many CpGs are in the methylation matrix? How many DMRs were provided? How many H3K27me3, and H3K27ac peaks are there? Report the exact numbers.
+
+```{r}
+summary_counts <- data.frame(
+  Feature = c(
+    "Genes in expression matrix",
+    "CpGs in methylation matrix",
+    "DMRs provided",
+    "H3K27me3 peaks",
+    "H3K27ac peaks"
+  ),
+  Count = c(
+    nrow(DEG_All_Genes),
+    nrow(N12),
+    nrow(dmr),
+    nrow(H3K27me_peaks),
+    nrow(H3K27ac_peaks)
+  )
+)
+
+summary_counts
+```
+
+Create one boxplot or violin plot showing the distribution of VST expression values per sample, and one showing the distribution of beta values per sample. Are all samples roughly comparable? Flag any sample that looks like an outlier and explain your reasoning. To get methylation plot faster, use only 1-2 chromosomes. Use full data for transcriptomics.
+
+```{r}
+
+theme_qc <- theme_bw(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r}
+#VST plot
+
+vst_long <- VST_data %>%
+  pivot_longer(
+    cols = -1,
+    names_to = "sample",
+    values_to = "VST"
+  )
+
+p_vst <- ggplot(vst_long, aes(x = sample, y = VST)) +
+  geom_boxplot(
+    fill = "#9C6ADE",   # purple
+    colour = "black",
+    width = 0.7,
+    outlier.size = 0.15,
+    alpha = 0.9
+  ) +
+  labs(
+    title = "Distribution of VST expression values per sample",
+    x = "Sample",
+    y = "VST expression"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      hjust = 0
+    ),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1
+    ),
+    panel.grid.minor = element_blank()
+  )
+
+p_vst
+```
+
+```{r}
+#Methylation beta-value boxplot - chromosome 1 and 2
+
+
+setDT(N2)
+setDT(N12)
+setDT(T2)
+setDT(T12)
+
+
+meth_long <- rbindlist(list(
+  N2[X.chr %in% c("chr1", "chr2"),
+             .(sample = "Healthy N2", group = "Healthy", beta = N2 / 100)],
+
+  N12[X.chr %in% c("chr1", "chr2"),
+              .(sample = "Healthy N12", group = "Healthy", beta = N12 / 100)],
+
+  T2[X.chr %in% c("chr1", "chr2"),
+            .(sample = "Tumour T2", group = "Tumour", beta = T2 / 100)],
+
+  T12[X.chr %in% c("chr1", "chr2"),
+             .(sample = "Tumour T12", group = "Tumour", beta = T12 / 100)]
+))
+
+p_meth <- ggplot(meth_long, aes(x = sample, y = beta, fill = group)) +
+  geom_boxplot(width = 0.7, outlier.size = 0.05, alpha = 0.9) +
+  scale_fill_manual(values = c(
+   "Healthy" = "#F4A241",
+    "Tumour" = "#9C6ADE"
+  )) +
+  labs(
+    title = "Distribution of methylation beta values per sample",
+    subtitle = "Using chr1 and chr2 only",
+    x = "Sample",
+    y = "Beta value",
+    fill = NULL
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0),
+    plot.subtitle = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank(),
+    legend.position = "top"
+  )
+
+p_meth
+```
+
+```{r}
+ggsave("VST_expression_boxplot.png", p_vst, width = 10, height = 6, dpi = 300)
+ggsave("methylation_beta_boxplot.png", p_meth, width = 7, height = 6, dpi = 300)
+
+```
+
+## Navigate to a locus containing a hypermethylated DMR that overlaps an H3K27ac in normal tissue AND where the nearest gene is a significant downregulated DEG.
+
+```{r}
+
+#Downregulated genes table
+
+downregulated_genes <- DEG_All_Genes %>%
+  filter(Regulation == "Down")
+
+downregulated_genes$GeneSymbol <- mapIds(
+  org.Hs.eg.db,
+  keys = as.character(downregulated_genes$ENTREZID),
+  column = "SYMBOL",
+  keytype = "ENTREZID",
+  multiVals = "first"
+)
+
+```
+
+```{r}
+
+# Find candidate DMRs for IGV
+# - Hypermethylated DMRs, that overlap H3K27ac peaks in normal tissue and downregulated gene nearby
+
+
+find_col <- function(df, patterns) {
+
+  hits <- names(df)[str_detect(
+    tolower(names(df)),
+    paste(tolower(patterns), collapse = "|")
+  )]
+
+  if (length(hits) == 0) {
+    stop(
+      "Could not find column matching: ",
+      paste(patterns, collapse = ", ")
+    )
+  }
+
+  hits[1]
+}
+
+```
+
+```{r}
+
+# Convert BED-like peak table to GRanges
+
+make_gr <- function(df) {
+
+  chr_col   <- find_col(df, c("^chr$", "chrom", "chromosome"))
+  start_col <- find_col(df, c("^start$"))
+  end_col   <- find_col(df, c("^end$"))
+
+  GRanges(
+    seqnames = df[[chr_col]],
+    ranges = IRanges(
+      start = as.integer(df[[start_col]]) + 1,
+      end   = as.integer(df[[end_col]])
+    )
+  )
+}
+
+```
+
+```{r}
+
+# Prepare DMRs
+
+dmr2 <- dmr %>%
+  mutate(
+    dmr_id = paste0("DMR_", row_number()),
+    chr = chr,
+    start0 = as.integer(start),
+    end = as.integer(end),
+    methylation_change = as.numeric(value),
+
+    direction = case_when(
+      methylation_change > 0 ~ "hyper",
+      methylation_change < 0 ~ "hypo",
+      TRUE ~ "unchanged"
+    ),
+
+    colour = case_when(
+      direction == "hyper" ~ "255,0,0",
+      direction == "hypo" ~ "0,0,255",
+      TRUE ~ "150,150,150"
+    ),
+
+    name = paste0(dmr_id, "_", direction)
+  )
+
+dmr_gr <- GRanges(
+  seqnames = dmr2$chr,
+  ranges = IRanges(
+    start = dmr2$start0 + 1,
+    end = dmr2$end
+  ),
+  dmr_id = dmr2$dmr_id,
+  direction = dmr2$direction,
+  methylation_change = dmr2$methylation_change
+)
+
+```
+
+```{r}
+
+# Prepare H3K27ac peaks
+
+h3k27ac_gr <- make_gr(H3K27ac_peaks)
+
+# Check DMR overlap with H3K27ac peaks
+
+dmr2$overlap_H3K27ac <- countOverlaps(
+  dmr_gr,
+  h3k27ac_gr
+) > 0
+
+```
+
+```{r}
+
+# Export coloured DMR BED file for IGV
+
+dmr_bed <- dmr2 %>%
+  transmute(
+    chr,
+    start = start0,
+    end,
+    name,
+    score = 0,
+    strand = ".",
+    thickStart = start0,
+    thickEnd = end,
+    itemRgb = colour
+  )
+
+write.table(
+  dmr_bed,
+  file = "DMR_red_hyper_blue_hypo.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+```{r}
+# Hypermethylated DMRs overlapping H3K27ac peaks
+
+candidate_loci <- dmr2 %>%
+  filter(
+    direction == "hyper",
+    overlap_H3K27ac
+  ) %>%
+  arrange(desc(abs(methylation_change))) %>%
+  mutate(
+    igv_window = paste0(
+      chr,
+      ":",
+      pmax(1, start0 - 25000),
+      "-",
+      end + 25000
+    )
+  ) %>%
+  dplyr::select(
+    dmr_id,
+    chr,
+    start0,
+    end,
+    L,
+    methylation_change,
+    direction,
+    overlap_H3K27ac,
+    igv_window
+  )
+
+```
+
+Annexin A1 (ANXA1) is a calcium-dependent phospholipid-binding protein and has been implicated in multiple functions essential in cancer, including cell proliferation, apoptosis, chemosensitivity, metastasis, and invasion. Loss of function or expression of this gene has been detected in multiple tumors. This DMR suppoert the pattern, that cancer silences normally active regulatory elements.
+
+```{r}
+
+hyper_dmr_deg<-readPNG("hypermethylated_DMR_with_significant_downregulated_DEG.png")
+print(image_read(hyper_dmr_deg), info = FALSE)
+```
+
+## Navigate to a second locus of your choice that shows a different or unexpected pattern (for example a hypermethylated DMR at an H3K27me3 region).
+
+```{r}
+
+# Find hypermethylated DMRs overlapping H3K27me3 peaks
+
+# Prepare H3K27me3 peaks
+h3k27me3_gr <- make_gr(H3K27me_peaks)
+
+# Check DMR overlap with H3K27me3 peaks
+dmr2$overlap_H3K27me3 <- countOverlaps(
+  dmr_gr,
+  h3k27me3_gr
+) > 0
+```
+
+```{r}
+# Create table of hypermethylated DMRs overlapping H3K27me3
+candidate_me3_loci <- dmr2 %>%
+  dplyr::filter(
+    direction == "hyper",
+    overlap_H3K27me3
+  ) %>%
+  dplyr::arrange(desc(abs(methylation_change))) %>%
+  dplyr::mutate(
+    igv_window = paste0(
+      chr,
+      ":",
+      pmax(1, start0 - 25000),
+      "-",
+      end + 25000
+    )
+  ) %>%
+  dplyr::select(
+    dmr_id,
+    chr,
+    start0,
+    end,
+    L,
+    methylation_change,
+    direction,
+    overlap_H3K27me3,
+    igv_window
+  )
+
+```
+
+Hypermethylated DMR at an H3K27me3 region
+
+```{r}
+
+hyper_dmr_H3<-readPNG("hypermethylated_DMR_at_an_H3K27me3.png")
+print(image_read(hyper_dmr_H3), info = FALSE)
+```
+
+# EnrichedHeatmap:
+
+Chromatin signal at DMRs (Use the EnrichedHeatmap R package (Gu et al., Bioinformatics, 2018) to visualise the normal-tissue chromatin signal and gene expression) o Create one figure centred on the differentially expressed genes (select genes had expression change of 3 or more times and corrected p-value was less than 0.01). Extend 3 kb on each side. The figure should contain the following panels left to right:  Panel 1 – H3K27ac signal (normal tissue bigWig). Colour scale: white -\> dark green.  Panel 2 – H3K27ac peaks density.  Panel 3 – H3K27me3 signal (normal tissue bigWig). Colour scale: white -\> dark blue.  Panel 4 - H3K27me peaks density.  Panel 5/6 - methylation signal.  Panel 7/8 - Row annotation of gene promoter. Use one healthy and one cancerous sample. Calculate mean methylation per promoter.  Panel 9 – Row annotation: log2FC of the gene. Colour scale: blue -\> white -\> red (centred at 0).
+
+```{r}
+
+#| message: false
+#| warning: false
+N2_clean <- N2 %>%
+  dplyr::rename( chr = X.chr) %>%
+  dplyr::select(chr, start, end, healthy_N2 = 4)
+
+N12_clean <- N12 %>%
+  dplyr::rename(chr = X.chr) %>%
+  dplyr::select(chr, start, end, healthy_N12 = 4)
+
+T2_clean <- T2 %>%
+  dplyr::rename(chr = X.chr) %>%
+  dplyr::select(chr, start, end, tumour_T2 = 4)
+
+T12_clean <- T12 %>%
+  dplyr::rename(chr = X.chr) %>%
+  dplyr::select(chr, start, end, tumour_T12 = 4)
+
+```
+
+```{r}
+
+# Join all 4 methylation samples by genomic coordinate
+
+
+meth_table <- list(
+  N2_clean,
+  N12_clean,
+  T2_clean,
+  T12_clean
+) %>%
+  purrr::reduce(
+    dplyr::full_join,
+    by = c("chr", "start", "end")
+  )
+
+meth_table <- meth_table %>%
+  mutate(
+    healthy_N2 = healthy_N2 / 100,
+    healthy_N12 = healthy_N12 / 100,
+    tumour_T2 = tumour_T2 / 100,
+    tumour_T12 = tumour_T12 / 100
+  )
+
+```
+
+```{r}
+
+# Calculate average healthy and tumour methylation
+
+
+meth_table <- meth_table %>%
+  mutate(
+    healthy_mean = rowMeans(
+      dplyr::select(., healthy_N2, healthy_N12),
+      na.rm = TRUE
+    ),
+    tumour_mean = rowMeans(
+      dplyr::select(., tumour_T2, tumour_T12),
+      na.rm = TRUE
+    ),
+    methylation_difference = tumour_mean - healthy_mean
+  )
+
+```
+
+```{r}
+
+find_col <- function(df, patterns) {
+  hits <- names(df)[str_detect(
+    tolower(names(df)),
+    paste(tolower(patterns), collapse = "|")
+  )]
+  
+  if (length(hits) == 0) {
+    stop("Could not find column matching: ", paste(patterns, collapse = ", "))
+  }
+  
+  hits[1]
+}
+
+```
+
+```{r}
+
+
+make_gr <- function(df) {
+  chr_col <- find_col(df, c("^chr$", "chrom", "chromosome", "x.chr"))
+  start_col <- find_col(df, c("^start$"))
+  end_col <- find_col(df, c("^end$"))
+  
+  GRanges(
+    seqnames = df[[chr_col]],
+    ranges = IRanges(
+      start = as.integer(df[[start_col]]) + 1,
+      end = as.integer(df[[end_col]])
+    )
+  )
+}
+
+```
+
+```{r}
+
+# 1. Select DEGs with at least 3-fold expression change
+
+
+deg_selected <- DEG_All_Genes %>%
+  mutate(
+    ENTREZID = as.character(ENTREZID),
+    log2FC = as.numeric(log2FoldChange),
+    padj = as.numeric(padj),
+    expression_group = case_when(
+      padj < 0.01 & log2FC >= log2(3) ~ "Upregulated",
+      padj < 0.01 & log2FC <= -log2(3) ~ "Downregulated",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  filter(expression_group %in% c("Upregulated", "Downregulated"))
+
+table(deg_selected$expression_group)
+
+```
+
+```{r}
+
+# 2. Get gene coordinates from ENTREZ IDs
+
+
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+
+all_genes_gr <- genes(txdb)
+
+deg_gene_gr <- all_genes_gr[names(all_genes_gr) %in% deg_selected$ENTREZID]
+
+deg_info <- deg_selected %>%
+  dplyr::select(ENTREZID, log2FC, padj, expression_group)
+
+deg_gene_gr$ENTREZID <- names(deg_gene_gr)
+
+mcols(deg_gene_gr) <- cbind(
+  mcols(deg_gene_gr),
+  deg_info[match(deg_gene_gr$ENTREZID, deg_info$ENTREZID), ]
+)
+
+deg_gene_gr <- deg_gene_gr[!is.na(deg_gene_gr$log2FC)]
+
+```
+
+```{r}
+
+# 3. Order rows and define TSS regions
+
+
+deg_gene_gr <- deg_gene_gr[
+  order(mcols(deg_gene_gr)$expression_group, mcols(deg_gene_gr)$log2FC)
+]
+
+tss_gr <- promoters(
+  deg_gene_gr,
+  upstream = 1,
+  downstream = 1
+)
+
+row_split <- factor(
+  mcols(deg_gene_gr)$expression_group,
+  levels = c("Upregulated", "Downregulated")
+)
+
+```
+
+```{r}
+
+# Colours for enriched profile lines
+
+
+group_line_cols <- c(
+  Upregulated = "red",
+  Downregulated = "blue"
+)
+
+group_line_lwd <- 1.5
+
+# Legend for enriched profile lines
+
+
+profile_line_legend <- Legend(
+  title = "Profile lines",
+  labels = c("Upregulated genes", "Downregulated genes"),
+  type = "lines",
+  legend_gp = gpar(
+    col = c("red", "blue"),
+    lwd = group_line_lwd
+  )
+)
+```
+
+```{r}
+
+# 4. Prepare H3K27ac and H3K27me3 peaks
+
+
+h3k27ac_peaks_gr <- make_gr(H3K27ac_peaks)
+h3k27me3_peaks_gr <- make_gr(H3K27me_peaks)
+
+h3k27ac_peaks_gr$score <- 1
+h3k27me3_peaks_gr$score <- 1
+
+
+```
+
+```{r}
+
+# 5. Prepare methylation table
+
+
+meth_table <- list(
+  N2_clean,
+  N12_clean,
+  T2_clean,
+  T12_clean
+) %>%
+  purrr::reduce(
+    dplyr::full_join,
+    by = c("chr", "start", "end")
+  ) %>%
+  mutate(
+    healthy_N2 = as.numeric(healthy_N2) / 100,
+    healthy_N12 = as.numeric(healthy_N12) / 100,
+    tumour_T2 = as.numeric(tumour_T2) / 100,
+    tumour_T12 = as.numeric(tumour_T12) / 100
+  ) %>%
+  mutate(
+    healthy_mean = rowMeans(
+      pick(healthy_N2, healthy_N12),
+      na.rm = TRUE
+    ),
+    tumour_mean = rowMeans(
+      pick(tumour_T2, tumour_T12),
+      na.rm = TRUE
+    ),
+    methylation_difference = tumour_mean - healthy_mean
+  )
+
+```
+
+```{r}
+
+# Checkint methylation values
+summary(meth_table$healthy_N2)
+summary(meth_table$healthy_N12)
+summary(meth_table$tumour_T2)
+summary(meth_table$tumour_T12)
+summary(meth_table$healthy_mean)
+summary(meth_table$tumour_mean)
+
+```
+
+```{r}
+
+# 6. Prepare methylation GRanges
+
+
+meth_gr_healthy_mean <- GRanges(
+  seqnames = meth_table$chr,
+  ranges = IRanges(
+    start = as.integer(meth_table$start) + 1,
+    end = as.integer(meth_table$end)
+  ),
+  score = meth_table$healthy_mean
+)
+
+meth_gr_tumour_mean <- GRanges(
+  seqnames = meth_table$chr,
+  ranges = IRanges(
+    start = as.integer(meth_table$start) + 1,
+    end = as.integer(meth_table$end)
+  ),
+  score = meth_table$tumour_mean
+)
+
+meth_gr_healthy_one <- GRanges(
+  seqnames = meth_table$chr,
+  ranges = IRanges(
+    start = as.integer(meth_table$start) + 1,
+    end = as.integer(meth_table$end)
+  ),
+  score = meth_table$healthy_N2
+)
+
+meth_gr_tumour_one <- GRanges(
+  seqnames = meth_table$chr,
+  ranges = IRanges(
+    start = as.integer(meth_table$start) + 1,
+    end = as.integer(meth_table$end)
+  ),
+  score = meth_table$tumour_T2
+)
+
+```
+
+```{r}
+
+# 7. Normalize signal to matrix around DEG TSS +/- 3 kb
+
+extend_bp <- 3000
+bin_size <- 50
+
+mat_h3k27ac <- normalizeToMatrix(
+  H3K27ac_signal,
+  tss_gr,
+  value_column = "score",
+  extend = extend_bp,
+  w = bin_size,
+  mean_mode = "w0",
+  background = 0
+)
+
+mat_h3k27ac_peaks <- normalizeToMatrix(
+  h3k27ac_peaks_gr,
+  tss_gr,
+  value_column = "score",
+  extend = extend_bp,
+  w = bin_size,
+  mean_mode = "w0",
+  background = 0
+)
+
+mat_h3k27me3 <- normalizeToMatrix(
+  H3K27me_signal,
+  tss_gr,
+  value_column = "score",
+  extend = extend_bp,
+  w = bin_size,
+  mean_mode = "w0",
+  background = 0
+)
+
+mat_h3k27me3_peaks <- normalizeToMatrix(
+  h3k27me3_peaks_gr,
+  tss_gr,
+  value_column = "score",
+  extend = extend_bp,
+  w = bin_size,
+  mean_mode = "w0",
+  background = 0
+)
+
+mat_meth_healthy <- normalizeToMatrix(
+  meth_gr_healthy_mean,
+  tss_gr,
+  value_column = "score",
+  extend = extend_bp,
+  w = bin_size,
+  mean_mode = "w0",
+  background = NA
+)
+
+mat_meth_tumour <- normalizeToMatrix(
+  meth_gr_tumour_mean,
+  tss_gr,
+  value_column = "score",
+  extend = extend_bp,
+  w = bin_size,
+  mean_mode = "w0",
+  background = NA
+)
+
+summary(as.vector(mat_meth_healthy))
+summary(as.vector(mat_meth_tumour))
+
+
+```
+
+```{r}
+
+# 8. Calculate mean methylation per promoter
+
+promoter_gr <- promoters(
+  deg_gene_gr,
+  upstream = 3000,
+  downstream = 3000
+)
+
+mean_meth_in_region <- function(meth_gr, regions_gr) {
+  hits <- findOverlaps(regions_gr, meth_gr)
+  result <- rep(NA_real_, length(regions_gr))
+  
+  if (length(hits) > 0) {
+    tmp <- data.frame(
+      region_id = queryHits(hits),
+      meth = mcols(meth_gr)$score[subjectHits(hits)]
+    )
+    
+    region_means <- tapply(tmp$meth, tmp$region_id, mean, na.rm = TRUE)
+    
+    result[as.integer(names(region_means))] <- as.numeric(region_means)
+  }
+  
+  result
+}
+
+promoter_meth_healthy <- mean_meth_in_region(
+  meth_gr_healthy_one,
+  promoter_gr
+)
+
+promoter_meth_tumour <- mean_meth_in_region(
+  meth_gr_tumour_one,
+  promoter_gr
+)
+
+summary(promoter_meth_healthy)
+summary(promoter_meth_tumour)
+
+```
+
+```{r}
+
+# 9. Colour 
+
+col_h3k27ac <- colorRamp2(
+  c(0, quantile(mat_h3k27ac, 0.98, na.rm = TRUE)),
+  c("white", "darkgreen")
+)
+
+col_h3k27me3 <- colorRamp2(
+  c(0, quantile(mat_h3k27me3, 0.98, na.rm = TRUE)),
+  c("white", "darkblue")
+)
+
+col_peak <- colorRamp2(
+  c(0, 1),
+  c("white", "black")
+)
+
+meth_vals <- c(as.vector(mat_meth_healthy), as.vector(mat_meth_tumour))
+meth_vals <- meth_vals[!is.na(meth_vals)]
+
+meth_q50 <- quantile(meth_vals, 0.50, na.rm = TRUE)
+meth_q95 <- quantile(meth_vals, 0.95, na.rm = TRUE)
+
+col_meth_signal <- colorRamp2(
+  c(0, meth_q50, meth_q95),
+  c("white", "orange", "red")
+)
+
+col_meth_promoter <- colorRamp2(
+  c(0, 0.5, 1),
+  c("white", "orange", "red")
+)
+
+max_abs_fc <- max(abs(mcols(deg_gene_gr)$log2FC), na.rm = TRUE)
+
+col_log2fc <- colorRamp2(
+  c(-max_abs_fc, 0, max_abs_fc),
+  c("blue", "white", "red")
+)
+
+```
+
+```{r}
+
+# 10. EnrichedHeatmap figure
+
+tss_axis <- c("-3kb", "TSS", " ", "+3kb")
+
+ht <- EnrichedHeatmap(
+  mat_h3k27ac,
+  name = "H3K27ac\nsignal",
+  col = col_h3k27ac,
+  row_split = row_split,
+  column_title = "H3K27ac signal",
+  axis_name = tss_axis,
+  axis_name_gp = gpar(fontsize = 10),
+  top_annotation = HeatmapAnnotation(
+    enriched = anno_enriched(
+      gp = gpar(
+        col = group_line_cols,
+        lwd = group_line_lwd
+      )
+    )
+  ),
+  cluster_rows = FALSE,
+  use_raster = TRUE
+) +
+  
+  EnrichedHeatmap(
+    mat_h3k27ac_peaks,
+    name = "H3K27ac\npeaks",
+    col = col_peak,
+    row_split = row_split,
+    column_title = "H3K27ac peaks density",
+    axis_name = tss_axis,
+    axis_name_gp = gpar(fontsize = 10),
+    top_annotation = HeatmapAnnotation(
+      enriched = anno_enriched(
+        gp = gpar(
+          col = group_line_cols,
+          lwd = group_line_lwd
+        )
+      )
+    ),
+    cluster_rows = FALSE,
+    use_raster = TRUE
+  ) +
+  
+  EnrichedHeatmap(
+    mat_h3k27me3,
+    name = "H3K27me3\nsignal",
+    col = col_h3k27me3,
+    row_split = row_split,
+    column_title = "H3K27me3 signal",
+    axis_name = tss_axis,
+    axis_name_gp = gpar(fontsize = 10),
+    top_annotation = HeatmapAnnotation(
+      enriched = anno_enriched(
+        gp = gpar(
+          col = group_line_cols,
+          lwd = group_line_lwd
+        )
+      )
+    ),
+    cluster_rows = FALSE,
+    use_raster = TRUE
+  ) +
+  
+  EnrichedHeatmap(
+    mat_h3k27me3_peaks,
+    name = "H3K27me3\npeaks",
+    col = col_peak,
+    row_split = row_split,
+    column_title = "H3K27me3 peaks density",
+    axis_name = tss_axis,
+    axis_name_gp = gpar(fontsize = 10),
+    top_annotation = HeatmapAnnotation(
+      enriched = anno_enriched(
+        gp = gpar(
+          col = group_line_cols,
+          lwd = group_line_lwd
+        )
+      )
+    ),
+    cluster_rows = FALSE,
+    use_raster = TRUE
+  ) +
+  
+  EnrichedHeatmap(
+    mat_meth_healthy,
+    name = "Healthy\nmeth",
+    col = col_meth_signal,
+    na_col = "grey90",
+    row_split = row_split,
+    column_title = "Healthy methylation",
+    axis_name = tss_axis,
+    axis_name_gp = gpar(fontsize = 10),
+    top_annotation = HeatmapAnnotation(
+      enriched = anno_enriched(
+        gp = gpar(
+          col = group_line_cols,
+          lwd = group_line_lwd
+        )
+      )
+    ),
+    cluster_rows = FALSE,
+    use_raster = TRUE
+  ) +
+  
+  EnrichedHeatmap(
+    mat_meth_tumour,
+    name = "Tumour\nmeth",
+    col = col_meth_signal,
+    na_col = "grey90",
+    row_split = row_split,
+    column_title = "Tumour methylation",
+    axis_name = tss_axis,
+    axis_name_gp = gpar(fontsize = 10),
+    top_annotation = HeatmapAnnotation(
+      enriched = anno_enriched(
+        gp = gpar(
+          col = group_line_cols,
+          lwd = group_line_lwd
+        )
+      )
+    ),
+    cluster_rows = FALSE,
+    use_raster = TRUE
+  ) +
+  
+  Heatmap(
+    promoter_meth_healthy,
+    name = "Healthy\npromoter meth",
+    col = col_meth_promoter,
+    na_col = "grey90",
+    row_split = row_split,
+    width = unit(5, "mm"),
+    cluster_rows = FALSE
+  ) +
+  
+  Heatmap(
+    promoter_meth_tumour,
+    name = "Tumour\npromoter meth",
+    col = col_meth_promoter,
+    na_col = "grey90",
+    row_split = row_split,
+    width = unit(5, "mm"),
+    cluster_rows = FALSE
+  ) +
+  
+  Heatmap(
+    mcols(deg_gene_gr)$log2FC,
+    name = "log2FC",
+    col = col_log2fc,
+    row_split = row_split,
+    width = unit(5, "mm"),
+    cluster_rows = FALSE
+  )
+```
+
+```{r}
+
+# 11. Drawing and saving
+draw(
+  ht,
+  heatmap_legend_side = "right",
+  annotation_legend_side = "right",
+  annotation_legend_list = list(profile_line_legend),
+  gap = unit(8, "mm")
+)
+
+
+png(
+  filename = "EnrichedHeatmap_DEGs_chromatin_methylation.png",
+  width = 6700,
+  height = 3800,
+  res = 300
+)
+
+draw(
+  ht,
+  heatmap_legend_side = "right",
+  annotation_legend_side = "right",
+  annotation_legend_list = list(profile_line_legend),
+  gap = unit(8, "mm")
+)
+
+dev.off()
+```
